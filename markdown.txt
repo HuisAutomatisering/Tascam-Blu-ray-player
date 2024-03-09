@@ -1,0 +1,6 @@
+custom_components/
+└── tascam_bd_mp4k/
+    ├── __init__.py
+    ├── manifest.json
+    ├── media_player.py
+    └── services.yaml
