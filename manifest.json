@@ -1,0 +1,7 @@
+{
+  "domain": "tascam_bd_mp4k",
+  "name": "TASCAM BD-MP4K Media Player Integration",
+  "documentation": "https://github.com/yourusername/tascam_bd_mp4k_integration",
+  "dependencies": [],
+  "codeowners": ["@yourusername"]
+}
