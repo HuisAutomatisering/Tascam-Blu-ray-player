@@ -1,91 +1,103 @@
+"""
+TASCAM BD-MP4K Media Player Integration for Home Assistant
+"""
+import asyncio
 import logging
+import socket
 
-from homeassistant.components.media_player import (
-    MediaPlayerEntity,
-    MediaPlayerEntity
+from homeassistant.components.media_player import MediaPlayerEntity
+from homeassistant.const import (
+    STATE_IDLE,
+    STATE_OFF,
+    STATE_PAUSED,
+    STATE_PLAYING,
 )
-from homeassistant.const import STATE_OFF, STATE_PLAYING, STATE_PAUSED, STATE_IDLE
+import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 
 _LOGGER = logging.getLogger(__name__)
 
-class TascamBdMp4kMediaPlayer(MediaPlayerEntity):
-    def __init__(self, host, name):
+DOMAIN = 'tascam_bd_mp4k'
+
+CONF_HOST = 'host'
+CONF_PORT = 'port'
+
+PLATFORM_SCHEMA = vol.Schema({
+    vol.Required(CONF_HOST): cv.string,
+    vol.Optional(CONF_PORT, default=9030): cv.port
+})
+
+async def async_setup_platform(hass, config, async_add_entities, discovery_info=None):
+    """Set up the TASCAM media player platform."""
+    host = config[CONF_HOST]
+    port = config[CONF_PORT]
+
+    # Create TASCAM media player instance
+    player = TascamMediaPlayer(host, port)
+
+    # Add the media player entity
+    async_add_entities([player])
+
+class TascamMediaPlayer(MediaPlayerEntity):
+    """Representation of a TASCAM media player."""
+
+    def __init__(self, host, port):
+        """Initialize the TASCAM media player."""
         self._host = host
-        self._name = name
-        self._state = None
-        self._media_position = 0
-        self._media_duration = 0
+        self._port = port
+        self._state = STATE_OFF
+        self._name = "TASCAM Media Player"
+        self._socket = None
+
+    async def async_update(self):
+        """Update the state of the media player."""
+        # Implement update logic here if needed
+        pass
+
+    async def async_turn_on(self):
+        """Turn on the media player."""
+        await self._send_command("!7PWR01")
+        self._state = STATE_IDLE
+
+    async def async_turn_off(self):
+        """Turn off the media player."""
+        await self._send_command("!7PWR00")
+        self._state = STATE_OFF
+
+    async def async_media_play(self):
+        """Send play command."""
+        await self._send_command("!7PLY")
+        self._state = STATE_PLAYING
+
+    async def async_media_pause(self):
+        """Send pause command."""
+        await self._send_command("!7PAS")
+        self._state = STATE_PAUSED
+
+    async def _send_command(self, command):
+        """Send command to the TASCAM media player."""
+        if self._socket is None:
+            self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            await self._socket.connect((self._host, self._port))
+
+        try:
+            await self.hass.async_add_executor_job(self._socket.send, command.encode())
+        except (ConnectionError, OSError) as err:
+            _LOGGER.error("Error communicating with TASCAM media player: %s", err)
+            self._socket = None
+            raise
 
     @property
     def name(self):
+        """Return the name of the media player."""
         return self._name
 
     @property
     def state(self):
+        """Return the state of the media player."""
         return self._state
 
     @property
-    def media_position(self):
-        return self._media_position
-
-    @property
-    def media_duration(self):
-        return self._media_duration
-
-    def update(self):
-        """Update the state of the media player."""
-        # Implement logic to query the device and update state
-        try:
-            # Example: query the device for current state
-            # and update self._state, self._media_position, self._media_duration
-            self._state = STATE_PLAYING  # Placeholder, replace with actual state
-            self._media_position = 0  # Placeholder, replace with actual position
-            self._media_duration = 3600  # Placeholder, replace with actual duration
-        except Exception as e:
-            _LOGGER.error("Error updating TASCAM BD-MP4K media player state: %s", e)
-            self._state = None
-
-    def turn_on(self):
-        """Turn on the media player."""
-        # Implement logic to send command to power on the device
-        try:
-            # Example: send command to power on the device
-            _LOGGER.debug("Turning on TASCAM BD-MP4K")
-        except Exception as e:
-            _LOGGER.error("Error turning on TASCAM BD-MP4K: %s", e)
-
-    def turn_off(self):
-        """Turn off the media player."""
-        # Implement logic to send command to power off the device
-        try:
-            # Example: send command to power off the device
-            _LOGGER.debug("Turning off TASCAM BD-MP4K")
-        except Exception as e:
-            _LOGGER.error("Error turning off TASCAM BD-MP4K: %s", e)
-
-    def media_play(self):
-        """Play media."""
-        # Implement logic to send command to play media
-        try:
-            # Example: send command to play media
-            _LOGGER.debug("Playing media on TASCAM BD-MP4K")
-        except Exception as e:
-            _LOGGER.error("Error playing media on TASCAM BD-MP4K: %s", e)
-
-    def media_pause(self):
-        """Pause media."""
-        # Implement logic to send command to pause media
-        try:
-            # Example: send command to pause media
-            _LOGGER.debug("Pausing media on TASCAM BD-MP4K")
-        except Exception as e:
-            _LOGGER.error("Error pausing media on TASCAM BD-MP4K: %s", e)
-
-    def media_stop(self):
-        """Stop media."""
-        # Implement logic to send command to stop media
-        try:
-            # Example: send command to stop media
-            _LOGGER.debug("Stopping media on TASCAM BD-MP4K")
-        except Exception as e:
-            _LOGGER.error("Error stopping media on TASCAM BD-MP4K: %s", e)
+    def available(self):
+        """Return True if the media player is available."""
+        return self._socket is not None
