@@ -5,7 +5,10 @@ import asyncio
 import logging
 import socket
 
-from homeassistant.components.media_player import MediaPlayerEntity
+from homeassistant.components.media_player import (
+    MediaPlayerEntity,
+    PLATFORM_SCHEMA,
+)
 from homeassistant.const import (
     STATE_IDLE,
     STATE_OFF,
@@ -22,7 +25,7 @@ DOMAIN = 'tascam_bd_mp4k'
 CONF_HOST = 'host'
 CONF_PORT = 'port'
 
-PLATFORM_SCHEMA = vol.Schema({
+PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Required(CONF_HOST): cv.string,
     vol.Optional(CONF_PORT, default=9030): cv.port
 })
@@ -74,13 +77,26 @@ class TascamMediaPlayer(MediaPlayerEntity):
         await self._send_command("!7PAS")
         self._state = STATE_PAUSED
 
-    async def _send_command(self, command):
-        """Send command to the TASCAM media player."""
+    async def async_added_to_hass(self):
+        """Handle when an entity is added to Home Assistant."""
+        await self._connect()
+
+    async def async_will_remove_from_hass(self):
+        """Handle when an entity is removed from Home Assistant."""
+        if self._socket:
+            self._socket.close()
+            self._socket = None
+
+    async def _connect(self):
+        """Establish a connection to the TASCAM media player."""
         if self._socket is None:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            await self._socket.connect((self._host, self._port))
+            await self.hass.async_add_executor_job(self._socket.connect, (self._host, self._port))
 
+    async def _send_command(self, command):
+        """Send command to the TASCAM media player."""
         try:
+            await self._connect()
             await self.hass.async_add_executor_job(self._socket.send, command.encode())
         except (ConnectionError, OSError) as err:
             _LOGGER.error("Error communicating with TASCAM media player: %s", err)
@@ -101,3 +117,13 @@ class TascamMediaPlayer(MediaPlayerEntity):
     def available(self):
         """Return True if the media player is available."""
         return self._socket is not None
+
+    @property
+    def supported_features(self):
+        """Flag media player features that are supported."""
+        return (
+            SUPPORT_TURN_ON |
+            SUPPORT_TURN_OFF |
+            SUPPORT_PLAY |
+            SUPPORT_PAUSE
+        )
