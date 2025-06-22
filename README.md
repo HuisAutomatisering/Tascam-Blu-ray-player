@@ -1,4 +1,4 @@
-# Tascam-Blu-ray-player
+# Tascam BD-MP4K Blu-ray player
 
 Place the folder tascam_bdmp4k in custom_components/ directory within your Home Assistant configuration directory. After that, restart Home Assistant, and it should load the custom integration.
 
