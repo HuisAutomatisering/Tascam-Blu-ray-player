@@ -1,8 +1,17 @@
-{
-  "domain": "tascam_bd_mp4k",
-  "name": "TASCAM BD-MP4K Media Player Integration",
-  "documentation": "https://github.com/yourusername/tascam_bd_mp4k_integration",
+  "domain": "tascam_bdmp4k",
+  "name": "Tascam BD-MP4K",
+  "documentation": "https://github.com/HuisAutomatisering/tascam_bdmp4k",
   "iot_class": "local_polling",
+  "requirements": [],
   "dependencies": [],
-  "codeowners": ["@yourusername"]
+  "codeowners": [
+    "@HuisAutomatisering"
+  ],
+  "version": "0.9.3",
+  "config_flow": true,
+  "platforms": [
+    "button",
+    "sensor",
+    "media_player"
+  ]
 }
