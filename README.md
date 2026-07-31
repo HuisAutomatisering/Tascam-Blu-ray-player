@@ -34,7 +34,7 @@ modes, which is shown as *unknown* in Home Assistant.
 
 ## Installation
 
-### HACS (roadmap is to become official)
+### HACS (recommended)
 
 1. Add this repository as a custom repository in HACS (category: Integration).
 2. Install **Tascam BD-MP4K** and restart Home Assistant.
@@ -64,4 +64,5 @@ MIT — see [LICENSE](LICENSE).
 
 ## Disclaimer
 
-This module is not affiliated with TEAC Corporation. Tascam, Teac and BD-MP4K are trademarks of their respective owners.
+This integration is not affiliated with TEAC Corporation. Tascam, TEAC and
+BD-MP4K are trademarks of their respective owners.

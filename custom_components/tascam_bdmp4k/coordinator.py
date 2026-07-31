@@ -102,10 +102,16 @@ class TascamCoordinator(DataUpdateCoordinator[TascamState]):
         state = TascamState()
         try:
             status = await self._query(REQ_STATUS)
-        except TascamConnectionError as err:
-            _LOGGER.debug("Device unreachable: %s", err)
-            state.available = False
-            return state
+        except TascamConnectionError:
+            # The player occasionally drops the connection; reconnect and
+            # retry once before declaring the device unavailable.
+            await self.client.async_disconnect()
+            try:
+                status = await self._query(REQ_STATUS)
+            except TascamConnectionError as err:
+                _LOGGER.debug("Device unreachable: %s", err)
+                state.available = False
+                return state
 
         state.available = True
         if status is not None and status.startswith("SST"):

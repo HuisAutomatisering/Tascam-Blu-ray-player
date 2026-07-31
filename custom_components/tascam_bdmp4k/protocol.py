@@ -147,23 +147,32 @@ class TascamClient:
                 await self.async_disconnect()
                 raise TascamConnectionError("Connection closed by device")
             buffer += chunk.decode("ascii", errors="replace")
-            acked, answer, done = self._parse_buffer(command, buffer, acked)
+            acked, answer, done, notified = self._parse_buffer(
+                command, buffer, acked
+            )
+            if notified:
+                # Spec 4.4.3: the controller must ack status notifications,
+                # otherwise the device resends them.
+                self._writer.write(f"{ACK}{CR}".encode("ascii"))
+                await self._writer.drain()
             if done:
                 return answer
         if acked:
             # Control command: ack without answer is a valid, complete reply.
             return answer
+        await self.async_disconnect()
         raise TascamConnectionError(f"No reply to {command}")
 
     def _parse_buffer(
         self, command: str, buffer: str, acked: bool
-    ) -> tuple[bool, str | None, bool]:
+    ) -> tuple[bool, str | None, bool, bool]:
         """Parse tokens from the receive buffer.
 
-        Returns (acked, answer, done). Unsolicited notifications are passed
-        to the notification callback.
+        Returns (acked, answer, done, notified). Unsolicited notifications
+        are passed to the notification callback.
         """
         answer: str | None = None
+        notified = False
         is_request = command.startswith(f"{START}?")
         for token in _MESSAGE_RE.findall(buffer):
             token = token.strip("\r\n+ ")
@@ -174,13 +183,14 @@ class TascamClient:
             if token == ACK:
                 acked = True
                 if not is_request:
-                    return acked, None, True
+                    return acked, None, True, notified
                 continue
             if token.startswith(START):
                 if acked and is_request and answer is None:
                     answer = token
-                    return acked, answer, True
+                    return acked, answer, True, notified
                 # Unsolicited status notification.
+                notified = True
                 if self._notification_callback is not None:
                     self._notification_callback(token)
-        return acked, answer, False
+        return acked, answer, False, notified
