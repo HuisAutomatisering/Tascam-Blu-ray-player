@@ -34,7 +34,7 @@ modes, which is shown as *unknown* in Home Assistant.
 
 ## Installation
 
-### HACS (recommended)
+### HACS (roadmap is to become official)
 
 1. Add this repository as a custom repository in HACS (category: Integration).
 2. Install **Tascam BD-MP4K** and restart Home Assistant.
@@ -60,6 +60,6 @@ ruff format custom_components
 
 ## License
 
-GPL-3.0 – see [LICENSE](LICENSE).
+MIT [LICENSE](LICENSE).
 
 The protocol documentation is © TEAC Corporation.
