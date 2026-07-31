@@ -60,6 +60,6 @@ ruff format custom_components
 
 ## License
 
-MIT [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
 
 The protocol documentation is © TEAC Corporation.
