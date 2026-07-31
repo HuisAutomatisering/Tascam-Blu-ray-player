@@ -62,4 +62,6 @@ ruff format custom_components
 
 MIT — see [LICENSE](LICENSE).
 
-The protocol documentation is © TEAC Corporation.
+## Disclaimer
+
+This module is not affiliated with TEAC Corporation. Tascam, Teac and BD-MP4K are trademarks of their respective owners.
