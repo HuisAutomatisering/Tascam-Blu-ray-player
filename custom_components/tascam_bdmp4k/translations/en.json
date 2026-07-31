@@ -1,0 +1,45 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "host": "Host",
+          "port": "Port"
+        },
+        "description": "Enter the IP address of your Tascam BD-MP4K. The player uses TCP port 9030 (fixed)."
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect",
+      "unknown": "Unexpected error"
+    },
+    "abort": {
+      "already_configured": "Device is already configured"
+    }
+  },
+  "entity": {
+    "sensor": {
+      "disc_status": {"name": "Disc status"},
+      "playback_status": {"name": "Playback status"},
+      "elapsed_time": {"name": "Elapsed time"},
+      "remaining_time": {"name": "Remaining time"},
+      "current_chapter": {"name": "Current chapter"},
+      "current_title": {"name": "Current title"}
+    },
+    "button": {
+      "tray_open": {"name": "Open tray"},
+      "tray_close": {"name": "Close tray"},
+      "home": {"name": "Home"},
+      "enter": {"name": "Enter"},
+      "return": {"name": "Return"},
+      "top_menu": {"name": "Top menu"},
+      "popup_menu": {"name": "Popup menu"},
+      "setup_menu": {"name": "Setup menu"},
+      "display_info": {"name": "Display info"},
+      "subtitle_next": {"name": "Next subtitle"},
+      "mute_on": {"name": "Mute on"},
+      "mute_off": {"name": "Mute off"},
+      "power_off": {"name": "Power off (standby)"}
+    }
+  }
+}

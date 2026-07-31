@@ -1,0 +1,146 @@
+"""DataUpdateCoordinator for the Tascam BD-MP4K."""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from datetime import timedelta
+
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
+from .const import (
+    DEFAULT_SCAN_INTERVAL,
+    DISC_STATUS_MAP,
+    DOMAIN,
+    PLAYBACK_STATUS_MAP,
+    REQ_CURRENT_CHAPTER,
+    REQ_CURRENT_TITLE,
+    REQ_DISC,
+    REQ_ELAPSED,
+    REQ_REMAIN,
+    REQ_STATUS,
+)
+from .protocol import TascamClient, TascamConnectionError, TascamNackError
+
+_LOGGER = logging.getLogger(__name__)
+
+type TascamConfigEntry = ConfigEntry[TascamCoordinator]
+
+
+@dataclass
+class TascamState:
+    """Parsed device state."""
+
+    available: bool = False
+    disc_status: str | None = None
+    playback_status: str | None = None
+    elapsed: int | None = None  # seconds
+    remaining: int | None = None  # seconds
+    current_chapter: int | None = None
+    current_title: int | None = None
+    raw: dict[str, str] = field(default_factory=dict)
+
+
+def _parse_hms(value: str) -> int | None:
+    """Parse an hhhmmss time string into seconds."""
+    if len(value) != 7 or not value.isdigit():
+        return None
+    hours, minutes, seconds = int(value[:3]), int(value[3:5]), int(value[5:7])
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def _parse_number(value: str) -> int | None:
+    """Parse a 4-digit chapter/title number, handling UNKN."""
+    if value.isdigit():
+        return int(value)
+    return None
+
+
+class TascamCoordinator(DataUpdateCoordinator[TascamState]):
+    """Poll the BD-MP4K over its single shared connection."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: TascamConfigEntry,
+        client: TascamClient,
+    ) -> None:
+        """Initialize the coordinator."""
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            config_entry=entry,
+            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+        )
+        self.client = client
+        client.set_notification_callback(self._handle_notification)
+
+    @callback
+    def _handle_notification(self, message: str) -> None:
+        """Handle an unsolicited status notification from the device."""
+        _LOGGER.debug("Status notification: %s", message)
+        # A notification means the state changed; refresh soon.
+        self.hass.async_create_task(self.async_request_refresh())
+
+    async def _query(self, command: str) -> str | None:
+        """Send a status request, tolerating NACK (feature unavailable)."""
+        try:
+            answer = await self.client.async_send(command)
+        except TascamNackError:
+            # The device NACKs requests that do not apply to the current
+            # mode (e.g. remaining time while stopped). Treat as unknown.
+            return None
+        if answer is None:
+            return None
+        return answer.removeprefix("!7")
+
+    async def _async_update_data(self) -> TascamState:
+        """Fetch state from the device."""
+        state = TascamState()
+        try:
+            status = await self._query(REQ_STATUS)
+        except TascamConnectionError as err:
+            _LOGGER.debug("Device unreachable: %s", err)
+            state.available = False
+            return state
+
+        state.available = True
+        if status is not None and status.startswith("SST"):
+            code = status.removeprefix("SST")
+            state.raw["status"] = code
+            state.playback_status = PLAYBACK_STATUS_MAP.get(code, code.lower())
+
+        try:
+            disc = await self._query(REQ_DISC)
+            if disc is not None and disc.startswith("MST"):
+                code = disc.removeprefix("MST")
+                state.raw["disc"] = code
+                state.disc_status = DISC_STATUS_MAP.get(code, code.lower())
+
+            if state.playback_status in ("playing", "paused"):
+                elapsed = await self._query(REQ_ELAPSED)
+                if elapsed is not None and elapsed.startswith("SET"):
+                    state.elapsed = _parse_hms(elapsed.removeprefix("SET"))
+
+                remaining = await self._query(REQ_REMAIN)
+                if remaining is not None and remaining.startswith("SRT"):
+                    state.remaining = _parse_hms(remaining.removeprefix("SRT"))
+
+                chapter = await self._query(REQ_CURRENT_CHAPTER)
+                if chapter is not None and chapter.startswith("TNM"):
+                    state.current_chapter = _parse_number(
+                        chapter.removeprefix("TNM")
+                    )
+
+                title = await self._query(REQ_CURRENT_TITLE)
+                if title is not None and title.startswith("GNM"):
+                    state.current_title = _parse_number(
+                        title.removeprefix("GNM")
+                    )
+        except TascamConnectionError as err:
+            _LOGGER.debug("Lost connection during poll: %s", err)
+
+        return state
