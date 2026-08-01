@@ -6,7 +6,8 @@ control protocol (TCP port 9030) from Home Assistant.
 ## Features
 
 - **Media player** entity: play, pause, stop, next/previous chapter,
-  standby, media position and duration (derived from elapsed + remaining time).
+  standby, power on via Wake-on-LAN (optional MAC address), media position
+  and duration (derived from elapsed + remaining time).
 - **Sensors**: disc status, playback status, elapsed time, remaining time,
   current chapter, current title.
 - **Buttons**: tray open/close, home, enter, return, top menu, popup menu,
@@ -18,7 +19,10 @@ The BD-MP4K protocol specification requires that the TCP connection is
 **held open continuously** and that **only one client** connects at a time.
 This integration therefore maintains a single shared connection for all
 entities, enforces the 30 ms minimum command interval, and handles the
-`ack`/`nack` protocol including unsolicited status notifications.
+`ack`/`nack` protocol. Status notifications pushed by the player are
+processed in real time, so play/pause/disc changes appear instantly;
+polling remains as a fallback and for elapsed/remaining time, which the
+player does not push.
 
 Elapsed/remaining time and chapter/title are only queried while playing or
 paused; the player replies `nack` (or `UNKN`) to these requests in other
@@ -26,8 +30,9 @@ modes, which is shown as *unknown* in Home Assistant.
 
 ## Limitations
 
-- **Power on over Ethernet is not supported by the protocol.** Use
-  Wake-on-LAN (enable WoL on the player) or RS-232C for power-on.
+- Power on over Ethernet is not supported by the protocol; this
+  integration uses Wake-on-LAN instead. Configure the player's MAC
+  address during setup and enable network standby/WoL on the player.
 - Only one controller can be connected to the player at a time. Disconnect
   other control systems (e.g. Companion, Crestron) while using this
   integration.

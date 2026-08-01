@@ -16,6 +16,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CMD_PAUSE,
+    CONF_MAC,
     CMD_PLAY,
     CMD_POWER_OFF,
     CMD_SKIP_NEXT,
@@ -25,6 +26,7 @@ from .const import (
 from .coordinator import TascamConfigEntry, TascamCoordinator
 from .entity import TascamEntity
 from .protocol import TascamError
+from .wol import async_send_magic_packet
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -68,6 +70,9 @@ class TascamMediaPlayer(TascamEntity, MediaPlayerEntity):
     def __init__(self, coordinator: TascamCoordinator) -> None:
         """Initialize the media player."""
         super().__init__(coordinator, "media_player")
+        self._mac: str | None = coordinator.config_entry.data.get(CONF_MAC)
+        if self._mac:
+            self._attr_supported_features |= MediaPlayerEntityFeature.TURN_ON
 
     @property
     def available(self) -> bool:
@@ -137,3 +142,10 @@ class TascamMediaPlayer(TascamEntity, MediaPlayerEntity):
         use Wake-on-LAN instead.
         """
         await self._async_send(CMD_POWER_OFF)
+
+    async def async_turn_on(self) -> None:
+        """Wake the device via Wake-on-LAN."""
+        if self._mac is None:
+            return
+        await async_send_magic_packet(self.hass, self._mac)
+        await self.coordinator.async_request_refresh()

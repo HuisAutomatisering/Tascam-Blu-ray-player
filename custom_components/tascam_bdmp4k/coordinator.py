@@ -80,10 +80,27 @@ class TascamCoordinator(DataUpdateCoordinator[TascamState]):
 
     @callback
     def _handle_notification(self, message: str) -> None:
-        """Handle an unsolicited status notification from the device."""
-        _LOGGER.debug("Status notification: %s", message)
-        # A notification means the state changed; refresh soon.
-        self.hass.async_create_task(self.async_request_refresh())
+        """Apply a pushed status notification to the state immediately."""
+        body = message.removeprefix("!7")
+        state = self.data
+        if state is None:
+            return
+        if body.startswith("SST"):
+            code = body.removeprefix("SST")
+            state.raw["status"] = code
+            state.playback_status = PLAYBACK_STATUS_MAP.get(code)
+            state.available = True
+            self.async_set_updated_data(state)
+            # Fetch times/chapter for the new transport state.
+            self.hass.async_create_task(self.async_request_refresh())
+        elif body.startswith("MST"):
+            code = body.removeprefix("MST")
+            state.raw["disc"] = code
+            state.disc_status = DISC_STATUS_MAP.get(code)
+            state.available = True
+            self.async_set_updated_data(state)
+        else:
+            self.hass.async_create_task(self.async_request_refresh())
 
     async def _query(self, command: str) -> str | None:
         """Send a status request, tolerating NACK (feature unavailable)."""

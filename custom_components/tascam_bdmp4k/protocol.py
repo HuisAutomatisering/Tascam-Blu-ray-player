@@ -1,16 +1,18 @@
 """Async TCP protocol client for the Tascam BD-MP4K.
 
 The BD-MP4K protocol specification requires that the TCP connection is held
-open continuously and that only one client connects at a time. Therefore this
-integration maintains a single shared connection for all entities.
+open continuously and that only one client connects at a time. This client
+keeps a single connection with a background listener task, so unsolicited
+status notifications from the player are received and dispatched in real
+time (push) while commands and status requests share the same connection.
 
 Protocol notes (RS-232C/Ethernet spec v1.01):
 - Commands are ASCII, start with ``!7`` and end with CR (0x0D).
-- The device replies ``ack`` (optionally followed by ``+`` and an answer such
-  as ``!7SET0011230``) or ``nack``.
+- The device replies ``ack`` (optionally followed by ``+`` and an answer
+  such as ``!7SET0011230``) or ``nack``.
 - The interval between commands must be at least 30 ms.
-- The device may push unsolicited status notifications at any time; the
-  controller should reply with ``ack``.
+- The device pushes status notifications on state changes; the controller
+  must reply with ``ack``.
 """
 
 from __future__ import annotations
@@ -31,8 +33,9 @@ NACK = "nack"
 COMMAND_INTERVAL = 0.03  # 30 ms minimum between commands (spec 4.3.6)
 RESPONSE_TIMEOUT = 1.0
 CONNECT_TIMEOUT = 5.0
+FLUSH_TIMEOUT = 0.05  # flush a partial buffer after 50 ms of silence
 
-_MESSAGE_RE = re.compile(r"(!7[A-Z0-9]{3}[^!]*|ack|nack)")
+_MESSAGE_RE = re.compile(r"(!7[A-Z0-9]{3}[^!\r\n]*|ack|nack)")
 
 
 class TascamError(Exception):
@@ -47,8 +50,19 @@ class TascamNackError(TascamError):
     """Raised when the device replies with NACK."""
 
 
+class _Pending:
+    """An in-flight command awaiting its reply."""
+
+    def __init__(self, is_request: bool) -> None:
+        self.is_request = is_request
+        self.acked = False
+        self.future: asyncio.Future[str | None] = (
+            asyncio.get_running_loop().create_future()
+        )
+
+
 class TascamClient:
-    """Maintain a single persistent connection to the BD-MP4K."""
+    """Maintain a single persistent, push-capable connection."""
 
     def __init__(self, host: str, port: int) -> None:
         """Initialize the client."""
@@ -56,8 +70,10 @@ class TascamClient:
         self._port = port
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
+        self._listen_task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self._last_command = 0.0
+        self._pending: _Pending | None = None
         self._notification_callback: Callable[[str], None] | None = None
 
     @property
@@ -72,7 +88,7 @@ class TascamClient:
         self._notification_callback = callback
 
     async def async_connect(self) -> None:
-        """Open the TCP connection."""
+        """Open the TCP connection and start the listener."""
         if self.connected:
             return
         try:
@@ -86,10 +102,19 @@ class TascamClient:
             raise TascamConnectionError(
                 f"Cannot connect to {self._host}:{self._port}: {err}"
             ) from err
+        self._listen_task = asyncio.get_running_loop().create_task(
+            self._listen()
+        )
         _LOGGER.debug("Connected to %s:%s", self._host, self._port)
 
     async def async_disconnect(self) -> None:
-        """Close the TCP connection."""
+        """Close the TCP connection and stop the listener."""
+        if (
+            self._listen_task is not None
+            and self._listen_task is not asyncio.current_task()
+        ):
+            self._listen_task.cancel()
+        self._listen_task = None
         if self._writer is not None:
             self._writer.close()
             try:
@@ -98,29 +123,34 @@ class TascamClient:
                 pass
         self._reader = None
         self._writer = None
+        self._fail_pending(TascamConnectionError("Disconnected"))
 
     async def async_send(self, command: str) -> str | None:
         """Send a command and return the answer message, if any.
 
         Returns the ``!7XXX...`` answer for status requests, or None for
         plain control commands that are only acknowledged.
-        Raises TascamNackError on NACK and TascamConnectionError on I/O
-        failure.
         """
         async with self._lock:
             await self.async_connect()
             await self._respect_interval()
-            assert self._writer is not None and self._reader is not None
+            assert self._writer is not None
+            pending = _Pending(is_request=command.startswith(f"{START}?"))
+            self._pending = pending
             try:
                 self._writer.write(f"{command}{CR}".encode("ascii"))
                 await self._writer.drain()
                 self._last_command = time.monotonic()
-                return await self._read_response(command)
+                return await asyncio.wait_for(
+                    pending.future, RESPONSE_TIMEOUT
+                )
             except (OSError, TimeoutError) as err:
                 await self.async_disconnect()
                 raise TascamConnectionError(
-                    f"I/O error for command {command}: {err}"
+                    f"No reply to {command}: {err}"
                 ) from err
+            finally:
+                self._pending = None
 
     async def _respect_interval(self) -> None:
         """Enforce the 30 ms minimum interval between commands."""
@@ -128,69 +158,92 @@ class TascamClient:
         if elapsed < COMMAND_INTERVAL:
             await asyncio.sleep(COMMAND_INTERVAL - elapsed)
 
-    async def _read_response(self, command: str) -> str | None:
-        """Read until an ack/nack (and optional answer) is received."""
+    async def _listen(self) -> None:
+        """Continuously read the socket and dispatch tokens."""
         assert self._reader is not None
         buffer = ""
-        acked = False
-        answer: str | None = None
-        deadline = time.monotonic() + RESPONSE_TIMEOUT
-        while time.monotonic() < deadline:
-            timeout = max(deadline - time.monotonic(), 0.01)
-            try:
-                chunk = await asyncio.wait_for(
-                    self._reader.read(256), timeout=timeout
+        try:
+            while True:
+                try:
+                    if buffer:
+                        chunk = await asyncio.wait_for(
+                            self._reader.read(256), timeout=FLUSH_TIMEOUT
+                        )
+                    else:
+                        chunk = await self._reader.read(256)
+                except TimeoutError:
+                    # No more data: the partial tail is a complete token.
+                    self._dispatch_buffer(buffer, final=True)
+                    buffer = ""
+                    continue
+                if not chunk:
+                    raise TascamConnectionError("Connection closed by device")
+                buffer += chunk.decode("ascii", errors="replace")
+                buffer = self._dispatch_buffer(buffer, final=False)
+        except asyncio.CancelledError:
+            raise
+        except TascamError as err:
+            _LOGGER.debug("Listener stopped: %s", err)
+            self._fail_pending(err)
+            self._listen_task = None
+            if self._writer is not None:
+                self._writer.close()
+            self._reader = None
+            self._writer = None
+
+    def _dispatch_buffer(self, buffer: str, final: bool) -> str:
+        """Dispatch complete tokens; return the unconsumed tail."""
+        tail = ""
+        matches = _MESSAGE_RE.findall(buffer)
+        if not final and matches:
+            last = matches[-1]
+            if buffer.endswith(last) and last.startswith(START):
+                # Possibly incomplete; hold until more data or a flush.
+                tail = last
+                matches = matches[:-1]
+        for token in matches:
+            self._dispatch(token.strip("\r\n+ "))
+        if not final and not matches and not tail:
+            # Possibly a partial 'ack'/'nack'/start character.
+            tail = buffer[-8:]
+        return tail
+
+    def _dispatch(self, token: str) -> None:
+        """Route one token to the pending command or the callback."""
+        if not token:
+            return
+        pending = self._pending
+        if token == NACK:
+            if pending is not None and not pending.future.done():
+                pending.future.set_exception(
+                    TascamNackError("Device replied NACK")
                 )
-            except TimeoutError:
-                break
-            if not chunk:
-                await self.async_disconnect()
-                raise TascamConnectionError("Connection closed by device")
-            buffer += chunk.decode("ascii", errors="replace")
-            acked, answer, done, notified = self._parse_buffer(
-                command, buffer, acked
-            )
-            if notified:
-                # Spec 4.4.3: the controller must ack status notifications,
-                # otherwise the device resends them.
+            return
+        if token == ACK:
+            if pending is None or pending.future.done():
+                return
+            if pending.is_request:
+                pending.acked = True
+            else:
+                pending.future.set_result(None)
+            return
+        if token.startswith(START):
+            if (
+                pending is not None
+                and pending.is_request
+                and pending.acked
+                and not pending.future.done()
+            ):
+                pending.future.set_result(token)
+                return
+            # Unsolicited status notification: ack it (spec 4.4.3).
+            if self._writer is not None:
                 self._writer.write(f"{ACK}{CR}".encode("ascii"))
-                await self._writer.drain()
-            if done:
-                return answer
-        if acked:
-            # Control command: ack without answer is a valid, complete reply.
-            return answer
-        await self.async_disconnect()
-        raise TascamConnectionError(f"No reply to {command}")
+            _LOGGER.debug("Notification: %s", token)
+            if self._notification_callback is not None:
+                self._notification_callback(token)
 
-    def _parse_buffer(
-        self, command: str, buffer: str, acked: bool
-    ) -> tuple[bool, str | None, bool, bool]:
-        """Parse tokens from the receive buffer.
-
-        Returns (acked, answer, done, notified). Unsolicited notifications
-        are passed to the notification callback.
-        """
-        answer: str | None = None
-        notified = False
-        is_request = command.startswith(f"{START}?")
-        for token in _MESSAGE_RE.findall(buffer):
-            token = token.strip("\r\n+ ")
-            if not token:
-                continue
-            if token == NACK:
-                raise TascamNackError(f"Device replied NACK to {command}")
-            if token == ACK:
-                acked = True
-                if not is_request:
-                    return acked, None, True, notified
-                continue
-            if token.startswith(START):
-                if acked and is_request and answer is None:
-                    answer = token
-                    return acked, answer, True, notified
-                # Unsolicited status notification.
-                notified = True
-                if self._notification_callback is not None:
-                    self._notification_callback(token)
-        return acked, answer, False, notified
+    def _fail_pending(self, err: TascamError) -> None:
+        """Fail the in-flight command, if any."""
+        if self._pending is not None and not self._pending.future.done():
+            self._pending.future.set_exception(err)

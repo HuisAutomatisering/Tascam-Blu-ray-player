@@ -8,8 +8,16 @@ from typing import Any
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 
-from .const import CONF_HOST, CONF_PORT, DEFAULT_NAME, DEFAULT_PORT, DOMAIN
+from .const import (
+    CONF_HOST,
+    CONF_MAC,
+    CONF_PORT,
+    DEFAULT_NAME,
+    DEFAULT_PORT,
+    DOMAIN,
+)
 from .protocol import TascamClient, TascamError
+from .wol import normalize_mac
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -17,6 +25,7 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_HOST): str,
         vol.Optional(CONF_PORT, default=DEFAULT_PORT): int,
+        vol.Optional(CONF_MAC): str,
     }
 )
 
@@ -34,9 +43,21 @@ class TascamConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             host = user_input[CONF_HOST]
             port = user_input[CONF_PORT]
+            if CONF_MAC in user_input:
+                mac = normalize_mac(user_input[CONF_MAC])
+                if mac is None:
+                    errors[CONF_MAC] = "invalid_mac"
+                else:
+                    user_input[CONF_MAC] = mac
             await self.async_set_unique_id(f"{host}:{port}")
             self._abort_if_unique_id_configured()
 
+            if errors:
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=STEP_USER_DATA_SCHEMA,
+                    errors=errors,
+                )
             client = TascamClient(host, port)
             try:
                 await client.async_connect()
