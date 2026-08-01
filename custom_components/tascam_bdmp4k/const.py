@@ -61,6 +61,7 @@ DISC_STATUS_MAP = {
 
 PLAYBACK_STATUS_MAP = {
     "PL": "playing",
+    "ST": "stopped",
     "PP": "paused",
     "DVSR": "slow_reverse",
     "DVSF": "slow_forward",

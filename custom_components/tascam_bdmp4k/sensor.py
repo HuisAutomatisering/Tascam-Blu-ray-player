@@ -38,7 +38,7 @@ SENSORS: tuple[TascamSensorDescription, ...] = (
         key="playback_status",
         translation_key="playback_status",
         device_class=SensorDeviceClass.ENUM,
-        options=[*PLAYBACK_STATUS_MAP.values(), "stopped"],
+        options=list(PLAYBACK_STATUS_MAP.values()),
         value_fn=lambda data: data.playback_status,
     ),
     TascamSensorDescription(

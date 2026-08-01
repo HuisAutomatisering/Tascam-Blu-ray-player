@@ -117,14 +117,18 @@ class TascamCoordinator(DataUpdateCoordinator[TascamState]):
         if status is not None and status.startswith("SST"):
             code = status.removeprefix("SST")
             state.raw["status"] = code
-            state.playback_status = PLAYBACK_STATUS_MAP.get(code, code.lower())
+            state.playback_status = PLAYBACK_STATUS_MAP.get(code)
+            if state.playback_status is None:
+                _LOGGER.debug("Unknown playback status code: %s", code)
 
         try:
             disc = await self._query(REQ_DISC)
             if disc is not None and disc.startswith("MST"):
                 code = disc.removeprefix("MST")
                 state.raw["disc"] = code
-                state.disc_status = DISC_STATUS_MAP.get(code, code.lower())
+                state.disc_status = DISC_STATUS_MAP.get(code)
+                if state.disc_status is None:
+                    _LOGGER.debug("Unknown disc status code: %s", code)
 
             if state.playback_status in ("playing", "paused"):
                 elapsed = await self._query(REQ_ELAPSED)

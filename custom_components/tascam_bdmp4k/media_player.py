@@ -70,6 +70,11 @@ class TascamMediaPlayer(TascamEntity, MediaPlayerEntity):
         super().__init__(coordinator, "media_player")
 
     @property
+    def available(self) -> bool:
+        """Keep the player available so it can show the off state."""
+        return self.coordinator.last_update_success
+
+    @property
     def state(self) -> MediaPlayerState:
         """Return the state of the player."""
         data = self.coordinator.data
@@ -102,7 +107,7 @@ class TascamMediaPlayer(TascamEntity, MediaPlayerEntity):
         try:
             await self.coordinator.client.async_send(command)
         except TascamError as err:
-            _LOGGER.error("Command %s failed: %s", command, err)
+            _LOGGER.warning("Command %s failed: %s", command, err)
         await self.coordinator.async_request_refresh()
 
     async def async_media_play(self) -> None:
