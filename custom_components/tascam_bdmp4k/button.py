@@ -114,7 +114,9 @@ class TascamButton(TascamEntity, ButtonEntity):
                 self.entity_description.command
             )
         except TascamError as err:
-            _LOGGER.error(
-                "Command %s failed: %s", self.entity_description.command, err
-            )
+            command = self.entity_description.command
+            if not self.coordinator.data.available:
+                _LOGGER.debug("Command %s skipped, player off: %s", command, err)
+            else:
+                _LOGGER.warning("Command %s failed: %s", command, err)
         await self.coordinator.async_request_refresh()

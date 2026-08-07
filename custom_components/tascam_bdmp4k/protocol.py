@@ -31,6 +31,8 @@ ACK = "ack"
 NACK = "nack"
 
 COMMAND_INTERVAL = 0.03  # 30 ms minimum between commands (spec 4.3.6)
+RETRY_DELAY = 0.5  # pause before retrying a failed command
+RETRY_ATTEMPTS = 2  # initial attempt plus one retry
 RESPONSE_TIMEOUT = 1.0
 CONNECT_TIMEOUT = 5.0
 FLUSH_TIMEOUT = 0.05  # flush a partial buffer after 50 ms of silence
@@ -129,8 +131,25 @@ class TascamClient:
         """Send a command and return the answer message, if any.
 
         Returns the ``!7XXX...`` answer for status requests, or None for
-        plain control commands that are only acknowledged.
+        plain control commands that are only acknowledged. A connection
+        failure is retried once after a short delay before raising, since
+        the player briefly refuses connections around power state changes.
         """
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                return await self._async_send_once(command)
+            except TascamConnectionError as err:
+                if attempt + 1 >= RETRY_ATTEMPTS:
+                    raise
+                _LOGGER.debug(
+                    "Retrying %s after connection failure: %s", command, err
+                )
+                await self.async_disconnect()
+                await asyncio.sleep(RETRY_DELAY)
+        return None  # pragma: no cover — loop always returns or raises
+
+    async def _async_send_once(self, command: str) -> str | None:
+        """Send a command once over the shared connection."""
         async with self._lock:
             await self.async_connect()
             await self._respect_interval()

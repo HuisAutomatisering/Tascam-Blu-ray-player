@@ -112,7 +112,11 @@ class TascamMediaPlayer(TascamEntity, MediaPlayerEntity):
         try:
             await self.coordinator.client.async_send(command)
         except TascamError as err:
-            _LOGGER.warning("Command %s failed: %s", command, err)
+            if not self.coordinator.data.available:
+                # Player is powered off; a failed command is expected.
+                _LOGGER.debug("Command %s skipped, player off: %s", command, err)
+            else:
+                _LOGGER.warning("Command %s failed: %s", command, err)
         await self.coordinator.async_request_refresh()
 
     async def async_media_play(self) -> None:
